@@ -1,0 +1,166 @@
+:root {
+  --bg: #ffffff;
+  --fg: #1f2328;
+  --muted: #59636e;
+  --border: #d1d9e0;
+  --subtle: #f6f8fa;
+  --accent: #0969da;
+  --add-bg: #dafbe1;
+  --add-num: #aceebb;
+  --add-line: #e6ffec;
+  --del-bg: #ffebe9;
+  --del-num: #ffcecb;
+  --del-line: #ffebe9;
+  --hunk-bg: #ddf4ff;
+  --add-fg: #1a7f37;
+  --del-fg: #d1242f;
+  --renamed-fg: #9a6700;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117;
+    --fg: #f0f6fc;
+    --muted: #9198a1;
+    --border: #3d444d;
+    --subtle: #151b23;
+    --accent: #4493f8;
+    --add-bg: rgba(46, 160, 67, 0.15);
+    --add-num: rgba(63, 185, 80, 0.3);
+    --add-line: rgba(46, 160, 67, 0.15);
+    --del-bg: rgba(248, 81, 73, 0.1);
+    --del-num: rgba(248, 81, 73, 0.3);
+    --del-line: rgba(248, 81, 73, 0.1);
+    --hunk-bg: rgba(56, 139, 253, 0.1);
+    --add-fg: #3fb950;
+    --del-fg: #f85149;
+    --renamed-fg: #d29922;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+}
+button { font: inherit; color: inherit; }
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--subtle);
+  border-bottom: 1px solid var(--border);
+}
+.brand { font-weight: 600; color: var(--muted); }
+.title { margin: 0; font-size: 16px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live { color: var(--muted); font-size: 12px; }
+.live.on { color: var(--add-fg); }
+
+.toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.toggle button { border: 0; background: var(--bg); padding: 2px 10px; cursor: pointer; font-size: 12px; }
+.toggle button + button { border-left: 1px solid var(--border); }
+.toggle button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+
+#app { display: flex; align-items: flex-start; }
+.sidebar {
+  position: sticky;
+  top: 45px;
+  flex: 0 0 280px;
+  height: calc(100vh - 45px);
+  overflow: auto;
+  padding: 12px 8px;
+  border-right: 1px solid var(--border);
+  font-size: 13px;
+}
+.sidebar-title { font-weight: 600; padding: 0 8px 8px; }
+.count { color: var(--muted); font-weight: 400; }
+.tree, .tree ul { list-style: none; margin: 0; padding-left: 12px; }
+.tree { padding-left: 0; }
+.tree summary { cursor: pointer; padding: 2px 8px; color: var(--muted); white-space: nowrap; }
+.tree a { display: flex; gap: 6px; align-items: center; padding: 2px 8px; border-radius: 6px; color: var(--fg); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree a:hover, .tree .current > a { background: var(--subtle); }
+.tree .current > a { font-weight: 600; }
+
+.content { flex: 1; min-width: 0; padding: 16px 24px 64px; }
+.summary { margin-bottom: 16px; color: var(--muted); }
+.summary strong { color: var(--fg); }
+.add { color: var(--add-fg); }
+.del { color: var(--del-fg); }
+.empty, .note { padding: 16px; color: var(--muted); }
+.error pre { white-space: pre-wrap; color: var(--del-fg); background: var(--del-bg); padding: 16px; border-radius: 6px; }
+
+.status { display: inline-block; width: 16px; text-align: center; font-family: var(--mono); font-size: 11px; font-weight: 700; border-radius: 3px; flex: none; }
+.st-added { color: var(--add-fg); }
+.st-deleted { color: var(--del-fg); }
+.st-modified { color: var(--renamed-fg); }
+.st-renamed { color: var(--accent); }
+
+.file { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 16px; scroll-margin-top: 56px; }
+.file-header {
+  position: sticky;
+  top: 45px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--subtle);
+  border-bottom: 1px solid var(--border);
+  border-radius: 6px 6px 0 0;
+  font-size: 13px;
+}
+.file.collapsed .file-header { border-bottom: 0; border-radius: 6px; }
+.file.collapsed .file-body { display: none; }
+.collapse { border: 0; background: none; cursor: pointer; padding: 0 4px; color: var(--muted); }
+.file.collapsed .collapse { transform: rotate(-90deg); }
+.path { font-family: var(--mono); font-weight: 600; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.stat { font-family: var(--mono); font-size: 12px; }
+
+.scroll { overflow-x: auto; }
+body[data-layout="split"] .scroll:has(> table.unified), body:not([data-layout="split"]) .scroll:has(> table.split) { display: none; }
+.file.previewing .scroll { display: none !important; }
+.md-preview { padding: 24px 32px; }
+
+table.diff { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; line-height: 20px; }
+table.split { table-layout: fixed; }
+table.split col.num-col { width: 60px; }
+td.num {
+  width: 1%;
+  min-width: 50px;
+  padding: 0 10px;
+  text-align: right;
+  color: var(--muted);
+  user-select: none;
+  vertical-align: top;
+}
+td.code { padding: 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; vertical-align: top; }
+tr.add td.code, td.code.add { background: var(--add-line); }
+tr.add td.num, td.num.add { background: var(--add-num); }
+tr.del td.code, td.code.del { background: var(--del-line); }
+tr.del td.num, td.num.del { background: var(--del-num); }
+td.empty { background: var(--subtle); }
+tr.hunk td { background: var(--hunk-bg); color: var(--muted); }
+.marker { user-select: none; display: inline-block; width: 1.2em; color: var(--muted); }
+
+td.code span[style], pre.hl span[style] { color: var(--l); }
+@media (prefers-color-scheme: dark) {
+  td.code span[style], pre.hl span[style] { color: var(--d); }
+}
+
+.markdown-body { max-width: 980px; }
+main.content > .markdown-body { margin: 0 auto; padding: 16px 32px; }
+.markdown-body pre.mermaid { background: transparent; text-align: center; }
+
+@media (max-width: 800px) {
+  .sidebar { display: none; }
+  .content { padding: 12px; }
+}

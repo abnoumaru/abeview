@@ -1,7 +1,11 @@
+pub mod cli;
+pub mod client;
 pub mod diff;
 pub mod git;
 pub mod highlight;
 pub mod markdown;
+pub mod server;
 pub mod target;
 pub mod tree;
 pub mod view;
+pub mod watch;
