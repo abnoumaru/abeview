@@ -6,8 +6,23 @@ use crate::tree::{self, TreeNode};
 
 /// Files larger than this are shown without syntax highlighting.
 const HIGHLIGHT_LIMIT: usize = 3_000;
-/// Files larger than this are not rendered at all, like GitHub's "Load diff".
-const RENDER_LIMIT: usize = 20_000;
+/// Files with more changed lines than this wait for "Load diff", like GitHub.
+const COLLAPSE_LIMIT: usize = 400;
+
+const GENERATED_FILE_NAMES: &[&str] = &[
+    "Cargo.lock",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "bun.lockb",
+    "Gemfile.lock",
+    "composer.lock",
+    "poetry.lock",
+    "uv.lock",
+    "go.sum",
+    "flake.lock",
+];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -109,7 +124,7 @@ fn diff_tree(nodes: &[TreeNode], files: &[FileDiff]) -> Markup {
 }
 
 fn file_block(index: usize, file: &FileDiff) -> Markup {
-    let total: usize = file.hunks.iter().map(|h| h.lines.len()).sum();
+    let changed = file.additions() + file.deletions();
     let is_markdown = is_markdown(file.path()) && file.status != FileStatus::Deleted;
     html! {
         section.file id=(format!("f-{index}")) data-path=(file.path()) {
@@ -144,10 +159,17 @@ fn file_block(index: usize, file: &FileDiff) -> Markup {
                         @if file.status == FileStatus::Renamed { "File renamed without changes." }
                         @else { "No content changes." }
                     }
-                } @else if total > RENDER_LIMIT {
-                    div.note { "Large diff (" (total) " lines) not rendered." }
+                } @else if changed > COLLAPSE_LIMIT || is_generated(file.path()) {
+                    div.load {
+                        button.load-diff type="button" { "Load diff" }
+                        span {
+                            @if is_generated(file.path()) { "Generated file. " }
+                            @else { "Large diff. " }
+                            (changed) " changed lines are hidden."
+                        }
+                    }
                 } @else {
-                    (diff_tables(file, total <= HIGHLIGHT_LIMIT))
+                    (file_tables(file))
                 }
                 @if is_markdown {
                     div.md-preview.markdown-body hidden {}
@@ -157,7 +179,9 @@ fn file_block(index: usize, file: &FileDiff) -> Markup {
     }
 }
 
-fn diff_tables(file: &FileDiff, highlight: bool) -> Markup {
+pub fn file_tables(file: &FileDiff) -> Markup {
+    let lines: usize = file.hunks.iter().map(|h| h.lines.len()).sum();
+    let highlight = lines <= HIGHLIGHT_LIMIT;
     let highlighted: Vec<Vec<String>> = file
         .hunks
         .iter()
@@ -284,6 +308,12 @@ fn markdown_tree(nodes: &[TreeNode], files: &[String], current: Option<&str>) ->
     }
 }
 
+/// Lock files and minified assets, whose diffs nobody reads line by line.
+pub fn is_generated(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    GENERATED_FILE_NAMES.contains(&name) || name.ends_with(".min.js") || name.ends_with(".min.css")
+}
+
 pub fn is_markdown(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     lower.ends_with(".md") || lower.ends_with(".markdown")
@@ -379,6 +409,55 @@ diff --git a/src/x.zzz b/src/x.zzz
         let src = html.find("data-path=\"src/x.zzz\"").unwrap();
         let readme = html.find("data-path=\"README.md\"").unwrap();
         assert!(src < readme);
+    }
+
+    fn added_file(path: &str, lines: usize) -> String {
+        let mut s = format!(
+            "diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,{lines} @@\n"
+        );
+        for i in 0..lines {
+            s.push_str(&format!("+line {i}\n"));
+        }
+        s
+    }
+
+    #[test]
+    fn defers_large_diffs_behind_load_button() {
+        let html = diff_content(&diff::parse(&added_file("big.txt", 401))).into_string();
+        assert!(html.contains("class=\"load-diff\""));
+        assert!(!html.contains("<table"));
+
+        let html = diff_content(&diff::parse(&added_file("small.txt", 400))).into_string();
+        assert!(!html.contains("class=\"load-diff\""));
+        assert!(html.contains("<table"));
+    }
+
+    #[test]
+    fn defers_generated_files_regardless_of_size() {
+        let html = diff_content(&diff::parse(&added_file("app/Cargo.lock", 1))).into_string();
+        assert!(html.contains("class=\"load-diff\""));
+        assert!(!html.contains("<table"));
+    }
+
+    #[test]
+    fn recognizes_generated_files() {
+        for path in [
+            "Cargo.lock",
+            "web/package-lock.json",
+            "yarn.lock",
+            "go.sum",
+            "a/b.min.js",
+        ] {
+            assert!(is_generated(path), "{path}");
+        }
+        assert!(!is_generated("src/lock.rs"));
+    }
+
+    #[test]
+    fn renders_a_single_file_body_on_demand() {
+        let files = diff::parse(&added_file("big.txt", 401));
+        let html = file_tables(&files[0]).into_string();
+        assert!(html.contains("table class=\"diff unified\""));
     }
 
     #[test]

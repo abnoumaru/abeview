@@ -129,6 +129,9 @@ button { font: inherit; color: inherit; }
 body[data-layout="split"] .scroll:has(> table.unified), body:not([data-layout="split"]) .scroll:has(> table.split) { display: none; }
 .file.previewing .scroll { display: none !important; }
 .md-preview { padding: 24px 32px; }
+.load { display: flex; align-items: center; gap: 12px; padding: 16px; color: var(--muted); }
+.load-diff { border: 1px solid var(--border); border-radius: 6px; background: var(--subtle); padding: 3px 12px; cursor: pointer; }
+.load-diff:hover { border-color: var(--muted); }
 
 table.diff { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; line-height: 20px; }
 table.split { table-layout: fixed; }

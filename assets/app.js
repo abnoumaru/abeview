@@ -5,6 +5,7 @@
   const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
   const collapsed = new Set();
   const previewing = new Set();
+  const loaded = new Set();
 
   mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: dark ? "dark" : "default" });
 
@@ -42,9 +43,21 @@
     }
   }
 
+  async function loadDiff(section) {
+    const box = section.querySelector(".load");
+    if (!box) return;
+    const res = await fetch(`/v/${viewId}/file?path=${encodeURIComponent(section.dataset.path)}`);
+    if (!res.ok) {
+      box.querySelector("span").textContent = `Failed to load diff (${res.status})`;
+      return;
+    }
+    box.outerHTML = await res.text();
+  }
+
   function restoreFileState() {
     for (const section of app.querySelectorAll("section.file")) {
       const path = section.dataset.path;
+      if (loaded.has(path)) loadDiff(section);
       section.classList.toggle("collapsed", collapsed.has(path));
       if (previewing.has(path)) {
         setDisplayButtons(section, "preview");
@@ -62,6 +75,11 @@
     const section = e.target.closest("section.file");
     if (!section) return;
     const path = section.dataset.path;
+    if (e.target.closest(".load-diff")) {
+      loaded.add(path);
+      loadDiff(section);
+      return;
+    }
     if (e.target.closest(".collapse")) {
       const now = section.classList.toggle("collapsed");
       now ? collapsed.add(path) : collapsed.delete(path);

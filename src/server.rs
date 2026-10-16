@@ -105,6 +105,7 @@ fn router(state: Arc<AppState>) -> Router {
         .route("/v/{id}/content", get(content))
         .route("/v/{id}/events", get(events))
         .route("/v/{id}/preview", get(preview))
+        .route("/v/{id}/file", get(file_diff))
         .route("/v/{id}/raw/{*path}", get(raw))
         .route("/assets/{name}", get(asset))
         .layer(middleware::from_fn_with_state(state.clone(), guard))
@@ -340,6 +341,29 @@ async fn preview(
     .map_err(|e| AppError::internal(e.into()))?
     .map_err(AppError::internal)?;
     Ok(Html(html))
+}
+
+/// Renders one file of the diff, for files deferred behind "Load diff".
+async fn file_diff(
+    State(state): State<Arc<AppState>>,
+    UrlPath(id): UrlPath<String>,
+    Query(q): Query<PreviewQuery>,
+) -> Result<Html<String>, AppError> {
+    let view = find_view(&state, &id)?;
+    let Target::Diff { repo, spec } = view.target.clone() else {
+        return Err(AppError::not_found());
+    };
+    let html = tokio::task::spawn_blocking(move || -> Result<Option<String>> {
+        let files = diff::parse(&Git::new(&repo).diff(&spec)?);
+        Ok(files
+            .iter()
+            .find(|f| f.path() == q.path)
+            .map(|f| view::file_tables(f).into_string()))
+    })
+    .await
+    .map_err(|e| AppError::internal(e.into()))?
+    .map_err(AppError::internal)?;
+    html.map(Html).ok_or_else(AppError::not_found)
 }
 
 async fn events(
