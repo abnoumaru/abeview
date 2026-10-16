@@ -30,7 +30,9 @@ pub enum Kind {
     Markdown,
 }
 
-pub fn page(view_id: &str, kind: Kind, title: &str, content: Markup) -> Markup {
+/// `state_key` identifies the target across server restarts, for state the
+/// browser keeps such as which files were marked as viewed.
+pub fn page(view_id: &str, state_key: &str, kind: Kind, title: &str, content: Markup) -> Markup {
     html! {
         (DOCTYPE)
         html lang="en" {
@@ -41,7 +43,7 @@ pub fn page(view_id: &str, kind: Kind, title: &str, content: Markup) -> Markup {
                 link rel="stylesheet" href="/assets/github-markdown.css";
                 link rel="stylesheet" href="/assets/app.css";
             }
-            body data-view=(view_id) data-kind=(if kind == Kind::Diff { "diff" } else { "markdown" }) {
+            body data-view=(view_id) data-state-key=(state_key) data-kind=(if kind == Kind::Diff { "diff" } else { "markdown" }) {
                 header.topbar {
                     span.brand { "abeview" }
                     h1.title { (title) }
@@ -85,6 +87,7 @@ pub fn diff_content(files: &[FileDiff]) -> Markup {
                 "Showing " strong { (files.len()) " changed files" }
                 " with " span.add { (additions) " additions" }
                 " and " span.del { (deletions) " deletions" }
+                span #viewed-progress.viewed-progress {}
             }
             @if files.is_empty() {
                 div.empty { "No changes." }
@@ -109,7 +112,7 @@ fn diff_tree(nodes: &[TreeNode], files: &[FileDiff]) -> Markup {
                     }
                 }
                 TreeNode::File { name, index } => {
-                    li.tree-file {
+                    li.tree-file data-path=(files[*index].path()) {
                         a href=(format!("#f-{index}")) title=(files[*index].path()) {
                             span class=(format!("status {}", status_class(files[*index].status))) {
                                 (status_letter(files[*index].status))
@@ -127,7 +130,7 @@ fn file_block(index: usize, file: &FileDiff) -> Markup {
     let changed = file.additions() + file.deletions();
     let is_markdown = is_markdown(file.path()) && file.status != FileStatus::Deleted;
     html! {
-        section.file id=(format!("f-{index}")) data-path=(file.path()) {
+        section.file id=(format!("f-{index}")) data-path=(file.path()) data-hash=(file.fingerprint()) {
             header.file-header {
                 button.collapse type="button" aria-label="Toggle file" { "▾" }
                 span class=(format!("status {}", status_class(file.status))) {
@@ -149,6 +152,10 @@ fn file_block(index: usize, file: &FileDiff) -> Markup {
                         button type="button" data-display="diff" { "Diff" }
                         button type="button" data-display="preview" { "Preview" }
                     }
+                }
+                label.viewed-toggle {
+                    input type="checkbox";
+                    " Viewed"
                 }
             }
             div.file-body {
@@ -395,6 +402,14 @@ diff --git a/src/x.zzz b/src/x.zzz
         assert!(html.contains("table class=\"diff split\""));
         assert!(html.contains("&lt;b&gt;"));
         assert!(!html.contains("<b>"));
+    }
+
+    #[test]
+    fn offers_viewed_checkbox_with_content_hash() {
+        let files = diff::parse(INPUT);
+        let html = diff_content(&files).into_string();
+        assert_eq!(html.matches("class=\"viewed-toggle\"").count(), 2);
+        assert!(html.contains(&format!("data-hash=\"{}\"", files[0].fingerprint())));
     }
 
     #[test]

@@ -222,9 +222,10 @@ async fn page(
         Target::Diff { .. } => view::Kind::Diff,
         _ => view::Kind::Markdown,
     };
+    let state_key = diff::content_hash(&serde_json::to_vec(&view.target).unwrap_or_default());
     let content = render_blocking(view.clone(), q.file).await;
     Ok(Html(
-        view::page(&view.id, kind, &view.title, content).into_string(),
+        view::page(&view.id, &state_key, kind, &view.title, content).into_string(),
     ))
 }
 

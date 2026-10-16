@@ -6,6 +6,7 @@
   const collapsed = new Set();
   const previewing = new Set();
   const loaded = new Set();
+  const viewedKey = `abeview.viewed.${document.body.dataset.stateKey}`;
 
   mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: dark ? "dark" : "default" });
 
@@ -98,6 +99,59 @@
     }
   });
 
+  function loadViewed() {
+    try { return JSON.parse(localStorage.getItem(viewedKey)) || {}; } catch (_) { return {}; }
+  }
+
+  function saveViewed(viewed) {
+    try { localStorage.setItem(viewedKey, JSON.stringify(viewed)); } catch (_) {}
+  }
+
+  // A file stays viewed only while its diff is unchanged; once it changes
+  // the mark is dropped and the file opens again.
+  function applyViewed(initial) {
+    const viewed = loadViewed();
+    const sections = [...app.querySelectorAll("section.file")];
+    let count = 0;
+    for (const section of sections) {
+      const path = section.dataset.path;
+      const isViewed = viewed[path] === section.dataset.hash;
+      if (isViewed) {
+        count++;
+        if (initial) collapsed.add(path);
+      } else if (path in viewed) {
+        delete viewed[path];
+        collapsed.delete(path);
+      }
+      section.querySelector(".viewed-toggle input").checked = isViewed;
+      section.classList.toggle("viewed", isViewed);
+      section.classList.toggle("collapsed", collapsed.has(path));
+      const item = app.querySelector(`.tree-file[data-path="${CSS.escape(path)}"]`);
+      if (item) item.classList.toggle("viewed", isViewed);
+    }
+    saveViewed(viewed);
+    const progress = document.getElementById("viewed-progress");
+    if (progress && sections.length) progress.textContent = `${count} / ${sections.length} files viewed`;
+  }
+
+  document.addEventListener("change", (e) => {
+    const box = e.target.closest(".viewed-toggle input");
+    if (!box) return;
+    const section = box.closest("section.file");
+    const path = section.dataset.path;
+    const viewed = loadViewed();
+    if (box.checked) {
+      viewed[path] = section.dataset.hash;
+      collapsed.add(path);
+    } else {
+      delete viewed[path];
+      collapsed.delete(path);
+    }
+    saveViewed(viewed);
+    applyViewed(false);
+    if (section.getBoundingClientRect().top < 0) section.scrollIntoView();
+  });
+
   async function refresh() {
     const res = await fetch(`/v/${viewId}/content${location.search}`);
     if (!res.ok) return;
@@ -107,6 +161,7 @@
     const newSidebar = app.querySelector(".sidebar");
     if (newSidebar) newSidebar.scrollTop = sidebarScroll;
     restoreFileState();
+    applyViewed(false);
     renderMermaid(app);
   }
 
@@ -122,6 +177,7 @@
   try { layout = localStorage.getItem("abeview.layout") || layout; } catch (_) {}
   setLayout(layout);
   restoreFileState();
+  if (document.body.dataset.kind === "diff") applyViewed(true);
   renderMermaid(app);
   connect();
 })();

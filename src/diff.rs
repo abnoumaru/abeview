@@ -44,6 +44,23 @@ impl FileDiff {
             .unwrap_or_default()
     }
 
+    /// Identifies this diff's content, so a "viewed" mark can be dropped once
+    /// the file changes again.
+    pub fn fingerprint(&self) -> String {
+        let mut data = Vec::new();
+        data.extend_from_slice(self.path().as_bytes());
+        for line in self.hunks.iter().flat_map(|h| &h.lines) {
+            data.push(match line.kind {
+                LineKind::Context => b' ',
+                LineKind::Added => b'+',
+                LineKind::Deleted => b'-',
+            });
+            data.extend_from_slice(line.text.as_bytes());
+            data.push(b'\n');
+        }
+        content_hash(&data)
+    }
+
     pub fn additions(&self) -> usize {
         self.count(LineKind::Added)
     }
@@ -59,6 +76,14 @@ impl FileDiff {
             .filter(|l| l.kind == kind)
             .count()
     }
+}
+
+/// FNV-1a: stable across runs and builds, which `std::hash` does not promise.
+pub fn content_hash(data: &[u8]) -> String {
+    let hash = data.iter().fold(0xcbf29ce484222325u64, |h, b| {
+        (h ^ u64::from(*b)).wrapping_mul(0x100000001b3)
+    });
+    format!("{hash:016x}")
 }
 
 /// Parses the output of `git diff --src-prefix=a/ --dst-prefix=b/`.
@@ -397,6 +422,18 @@ diff --git a/a b/a
             vec!["-- not a header", "++ also content", "@@ not a hunk"]
         );
         assert_eq!(f.hunks.len(), 1);
+    }
+
+    #[test]
+    fn fingerprint_changes_only_when_the_diff_changes() {
+        let base = "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-x\n+y\n";
+        let same = parse(base)[0].fingerprint();
+        assert_eq!(same, parse(base)[0].fingerprint());
+        assert_ne!(same, parse(&base.replace("+y", "+z"))[0].fingerprint());
+        assert_ne!(
+            same,
+            parse(&base.replace("-x\n+y", "+x\n-y"))[0].fingerprint()
+        );
     }
 
     #[test]
