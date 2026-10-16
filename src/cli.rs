@@ -1,3 +1,4 @@
+use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -28,6 +29,8 @@ enum Cmd {
     ///
     /// SPEC can be a branch (compared from its merge base with --base or the
     /// default branch), A...B (from the merge base), or A..B (tree to tree).
+    ///
+    /// Markdown piped into stdin is shown above the diff as a description.
     Diff {
         spec: Option<String>,
         /// Base for a single-branch SPEC. Defaults to origin/HEAD, main or master.
@@ -35,6 +38,8 @@ enum Cmd {
         base: Option<String>,
     },
     /// Show the changes introduced by a single commit.
+    ///
+    /// Markdown piped into stdin is shown above the diff as a description.
     Show {
         #[arg(default_value = "HEAD")]
         rev: String,
@@ -81,8 +86,17 @@ pub fn run() -> Result<()> {
         }
     };
 
+    // Only diffs show a description, so other views never wait on stdin.
+    let note = match target {
+        Target::Diff { .. } => {
+            let stdin = std::io::stdin();
+            let is_terminal = stdin.is_terminal();
+            read_note(stdin, is_terminal)?
+        }
+        _ => None,
+    };
     let info = client::ensure_server()?;
-    let url = client::open_view(&info, &target)?;
+    let url = client::open_view(&info, &target, note)?;
     println!("{url}");
     if !cli.no_open {
         open::that_detached(&url).context("failed to open the browser")?;
@@ -102,4 +116,35 @@ fn diff_target(repo: PathBuf, spec: DiffSpec) -> Result<Target> {
         git.verify_commit(rev)?;
     }
     Ok(Target::Diff { repo, spec })
+}
+
+/// Reads the description of the changes piped in, such as
+/// `abeview diff <<'EOF' ... EOF`.
+fn read_note(mut input: impl Read, is_terminal: bool) -> Result<Option<String>> {
+    if is_terminal {
+        return Ok(None);
+    }
+    let mut note = String::new();
+    input
+        .read_to_string(&mut note)
+        .context("failed to read the note from stdin")?;
+    let note = note.trim();
+    Ok((!note.is_empty()).then(|| note.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_note_from_piped_input() {
+        let note = read_note("## Why\n\nBecause.\n".as_bytes(), false).unwrap();
+        assert_eq!(note.as_deref(), Some("## Why\n\nBecause."));
+    }
+
+    #[test]
+    fn ignores_terminal_and_empty_input() {
+        assert_eq!(read_note("x".as_bytes(), true).unwrap(), None);
+        assert_eq!(read_note(" \n".as_bytes(), false).unwrap(), None);
+    }
 }

@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::server::OpenResponse;
+use crate::server::{OpenRequest, OpenResponse};
 use crate::target::Target;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -120,14 +120,17 @@ pub fn ensure_server() -> Result<ServerInfo> {
     bail!("the abeview server did not start within {STARTUP_TIMEOUT:?}")
 }
 
-pub fn open_view(info: &ServerInfo, target: &Target) -> Result<String> {
+pub fn open_view(info: &ServerInfo, target: &Target, note: Option<String>) -> Result<String> {
     let mut res = agent()
         .post(info.url("/api/views"))
         .header("x-abeview-token", &info.token)
         .config()
         .http_status_as_error(false)
         .build()
-        .send_json(target)?;
+        .send_json(OpenRequest {
+            target: target.clone(),
+            note,
+        })?;
     if !res.status().is_success() {
         bail!(
             "server rejected the request: {}",

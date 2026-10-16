@@ -14,6 +14,17 @@ const DIFF_OPTIONS: &[&str] = &[
     "-M",
 ];
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Commit {
+    pub hash: String,
+    pub short_hash: String,
+    pub author: String,
+    /// Relative, such as "3 hours ago".
+    pub date: String,
+    pub subject: String,
+    pub body: String,
+}
+
 pub struct Git {
     repo: PathBuf,
 }
@@ -77,6 +88,58 @@ impl Git {
                 self.run_diff(&["show", "--format=", "--diff-merges=first-parent"], &[rev])
             }
         }
+    }
+
+    /// Commits the diff is made of, oldest first.
+    pub fn commits(&self, spec: &DiffSpec) -> Result<Vec<Commit>> {
+        const FORMAT: &str = "--format=%H%x00%h%x00%an%x00%ar%x00%s%x00%b%x1e";
+        const LIMIT: &str = "--max-count=250";
+        for rev in spec.revisions() {
+            self.verify_commit(rev)?;
+        }
+        let range;
+        let args: Vec<&str> = match spec {
+            DiffSpec::WorkingTree => return Ok(Vec::new()),
+            DiffSpec::MergeBase { from, to } | DiffSpec::Range { from, to } => {
+                range = format!("{from}..{to}");
+                vec![
+                    "log",
+                    "--no-show-signature",
+                    "--reverse",
+                    LIMIT,
+                    FORMAT,
+                    "--end-of-options",
+                    &range,
+                    "--",
+                ]
+            }
+            DiffSpec::Commit { rev } => {
+                vec![
+                    "log",
+                    "--no-show-signature",
+                    "-1",
+                    FORMAT,
+                    "--end-of-options",
+                    rev,
+                    "--",
+                ]
+            }
+        };
+        let out = self.run(&args)?;
+        Ok(out
+            .split('\x1e')
+            .filter_map(|record| {
+                let mut f = record.trim_start_matches('\n').split('\0');
+                Some(Commit {
+                    hash: f.next().filter(|h| !h.is_empty())?.to_string(),
+                    short_hash: f.next()?.to_string(),
+                    author: f.next()?.to_string(),
+                    date: f.next()?.to_string(),
+                    subject: f.next()?.to_string(),
+                    body: f.next()?.trim_end().to_string(),
+                })
+            })
+            .collect())
     }
 
     /// Content of `path` on the "after" side of the diff.
@@ -289,6 +352,52 @@ mod tests {
             rev: "--output=/tmp/x".into(),
         };
         assert!(Git::new(dir.path()).diff(&spec).is_err());
+    }
+
+    fn commit(dir: &Path, file: &str, message: &str) {
+        std::fs::write(dir.join(file), message).unwrap();
+        sh(dir, &["add", "."]);
+        sh(dir, &["commit", "-q", "-m", message]);
+    }
+
+    #[test]
+    fn lists_branch_commits_oldest_first() {
+        let dir = repo();
+        sh(dir.path(), &["switch", "-q", "-c", "feat"]);
+        commit(dir.path(), "b.txt", "first\n\nwhy it was needed");
+        commit(dir.path(), "c.txt", "second");
+        let git = Git::new(dir.path());
+        let spec = DiffSpec::MergeBase {
+            from: "main".into(),
+            to: "feat".into(),
+        };
+        let commits = git.commits(&spec).unwrap();
+        let subjects: Vec<_> = commits.iter().map(|c| c.subject.as_str()).collect();
+        assert_eq!(subjects, vec!["first", "second"]);
+        assert_eq!(commits[0].body, "why it was needed");
+        assert_eq!(commits[0].author, "t");
+        assert_eq!(commits[0].short_hash.len(), 7);
+    }
+
+    #[test]
+    fn single_commit_spec_lists_that_commit() {
+        let dir = repo();
+        let commits = Git::new(dir.path())
+            .commits(&DiffSpec::Commit { rev: "HEAD".into() })
+            .unwrap();
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].subject, "init");
+    }
+
+    #[test]
+    fn working_tree_has_no_commits() {
+        let dir = repo();
+        assert!(
+            Git::new(dir.path())
+                .commits(&DiffSpec::WorkingTree)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

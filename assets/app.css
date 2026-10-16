@@ -91,6 +91,18 @@ button { font: inherit; color: inherit; }
 .tree .current > a { font-weight: 600; }
 
 .content { flex: 1; min-width: 0; padding: 16px 24px 64px; }
+.description { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 16px; }
+.description > * + * { border-top: 1px solid var(--border); }
+.note-body.markdown-body { padding: 16px 24px; max-width: none; }
+.commits summary { cursor: pointer; padding: 8px 16px; font-weight: 600; background: var(--subtle); }
+.commit-list { list-style: none; margin: 0; padding: 0; }
+.commit-list li { display: flex; gap: 12px; align-items: baseline; padding: 6px 16px; border-top: 1px solid var(--border); }
+.commit-list .subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sha { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+.meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.commit-message { padding: 16px 24px; }
+.commit-message h2 { margin: 0 0 8px; font-size: 18px; }
+.commit-message pre { margin: 0 0 12px; white-space: pre-wrap; font-family: var(--mono); font-size: 13px; }
 .summary { margin-bottom: 16px; color: var(--muted); }
 .summary strong { color: var(--fg); }
 .add { color: var(--add-fg); }

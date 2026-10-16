@@ -37,6 +37,8 @@ struct View {
     id: String,
     target: Target,
     title: String,
+    /// Explanation of the changes, shown above a diff.
+    note: Mutex<Option<String>>,
     events: broadcast::Sender<()>,
     _watcher: Option<notify::RecommendedWatcher>,
 }
@@ -58,6 +60,13 @@ struct AppState {
     views: Mutex<HashMap<String, Arc<View>>>,
     clients: AtomicUsize,
     last_activity: Mutex<Instant>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct OpenRequest {
+    pub target: Target,
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -160,8 +169,9 @@ async fn require_token(State(state): State<Arc<AppState>>, req: Request, next: N
 
 async fn create_view(
     State(state): State<Arc<AppState>>,
-    Json(target): Json<Target>,
+    Json(req): Json<OpenRequest>,
 ) -> Result<Json<OpenResponse>, AppError> {
+    let OpenRequest { target, note } = req;
     validate_target(&target)?;
     let existing = state
         .views
@@ -169,9 +179,16 @@ async fn create_view(
         .unwrap()
         .values()
         .find(|v| v.target == target)
-        .map(|v| v.id.clone());
+        .cloned();
     let id = match existing {
-        Some(id) => id,
+        Some(view) => {
+            // Reopening without a note keeps the previous one.
+            if note.is_some() {
+                *view.note.lock().unwrap() = note;
+                let _ = view.events.send(());
+            }
+            view.id.clone()
+        }
         None => {
             let (events, _) = broadcast::channel(16);
             let watcher = watch::spawn(&target, events.clone())
@@ -181,6 +198,7 @@ async fn create_view(
                 id: random_hex(16),
                 title: title_for(&target),
                 target,
+                note: Mutex::new(note),
                 events,
                 _watcher: watcher,
             };
@@ -250,8 +268,21 @@ async fn render_blocking(view: Arc<View>, file: Option<String>) -> Markup {
 fn render_content(view: &View, file: Option<&str>) -> Result<Markup> {
     match &view.target {
         Target::Diff { repo, spec } => {
-            let files = diff::parse(&Git::new(repo).diff(spec)?);
-            Ok(view::diff_content(&files))
+            let git = Git::new(repo);
+            let files = diff::parse(&git.diff(spec)?);
+            let mut commits = git.commits(spec)?;
+            let history = match spec {
+                DiffSpec::Commit { .. } if commits.len() == 1 => {
+                    view::History::Message(commits.remove(0))
+                }
+                _ => view::History::Commits(commits),
+            };
+            let note = view.note.lock().unwrap().clone();
+            let description = view::Description {
+                note_html: note.map(|n| render_markdown(view, &n, "")),
+                history,
+            };
+            Ok(view::diff_content(&files, &description))
         }
         Target::MarkdownFile { path } => {
             let source = read_text(path)?;
@@ -596,6 +627,7 @@ mod tests {
             id: "v".into(),
             target: Target::MarkdownDir { path: "/".into() },
             title: String::new(),
+            note: Mutex::new(None),
             events: events.clone(),
             _watcher: None,
         };
@@ -630,6 +662,52 @@ mod tests {
             out.push_str(&String::from_utf8_lossy(&chunk));
         }
         out
+    }
+
+    #[tokio::test]
+    async fn reopening_with_a_note_replaces_it_and_keeps_the_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(AppState {
+            token: String::new(),
+            port: 0,
+            views: Mutex::new(HashMap::new()),
+            clients: AtomicUsize::new(0),
+            last_activity: Mutex::new(Instant::now()),
+        });
+        let open = |note: Option<&str>| {
+            let req = OpenRequest {
+                target: Target::MarkdownDir {
+                    path: dir.path().to_path_buf(),
+                },
+                note: note.map(str::to_string),
+            };
+            create_view(State(state.clone()), Json(req))
+        };
+        let note_of = |url: &str| {
+            let id = url.rsplit('/').next().unwrap();
+            find_view(&state, id)
+                .ok()
+                .unwrap()
+                .note
+                .lock()
+                .unwrap()
+                .clone()
+        };
+
+        let first = open(Some("one")).await.ok().unwrap().0.url;
+        let second = open(Some("two")).await.ok().unwrap().0.url;
+        assert_eq!(first, second);
+        assert_eq!(note_of(&first).as_deref(), Some("two"));
+
+        let _ = open(None).await.ok().unwrap();
+        assert_eq!(note_of(&first).as_deref(), Some("two"));
+    }
+
+    #[test]
+    fn open_request_note_is_optional() {
+        let req: OpenRequest =
+            serde_json::from_str(r#"{"target":{"kind":"markdown_dir","path":"/"}}"#).unwrap();
+        assert_eq!(req.note, None);
     }
 
     #[test]

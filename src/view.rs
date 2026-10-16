@@ -1,6 +1,7 @@
 use maud::{DOCTYPE, Markup, PreEscaped, html};
 
 use crate::diff::{self, FileDiff, FileStatus, Hunk, LineKind};
+use crate::git::Commit;
 use crate::highlight::{escape_into, highlighter};
 use crate::tree::{self, TreeNode};
 
@@ -71,7 +72,68 @@ pub fn error_content(message: &str) -> Markup {
     }
 }
 
-pub fn diff_content(files: &[FileDiff]) -> Markup {
+/// What is shown above the diff, like a pull request's description.
+#[derive(Default)]
+pub struct Description {
+    /// Explanation passed in by whoever opened the view, already rendered.
+    pub note_html: Option<String>,
+    pub history: History,
+}
+
+#[derive(Default)]
+pub enum History {
+    #[default]
+    None,
+    Commits(Vec<Commit>),
+    /// A single commit, shown with its whole message.
+    Message(Commit),
+}
+
+fn description_block(description: &Description) -> Markup {
+    let has_history = match &description.history {
+        History::None => false,
+        History::Commits(commits) => !commits.is_empty(),
+        History::Message(_) => true,
+    };
+    if description.note_html.is_none() && !has_history {
+        return html! {};
+    }
+    html! {
+        section.description {
+            @if let Some(note) = &description.note_html {
+                div.note-body.markdown-body { (PreEscaped(note)) }
+            }
+            @match &description.history {
+                History::None => {}
+                History::Commits(commits) => @if !commits.is_empty() {
+                    details.commits open {
+                        summary { "Commits " span.count { (commits.len()) } }
+                        ol.commit-list {
+                            @for c in commits {
+                                li title=(c.hash) {
+                                    code.sha { (c.short_hash) }
+                                    span.subject { (c.subject) }
+                                    span.meta { (c.author) " · " (c.date) }
+                                }
+                            }
+                        }
+                    }
+                }
+                History::Message(c) => {
+                    div.commit-message {
+                        h2 { (c.subject) }
+                        @if !c.body.is_empty() {
+                            pre { (c.body) }
+                        }
+                        div.meta { code.sha { (c.short_hash) } " " (c.author) " · " (c.date) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn diff_content(files: &[FileDiff], description: &Description) -> Markup {
     let paths: Vec<&str> = files.iter().map(|f| f.path()).collect();
     let nodes = tree::build(&paths);
     let order = tree::file_order(&nodes);
@@ -83,6 +145,7 @@ pub fn diff_content(files: &[FileDiff]) -> Markup {
             ul.tree { (diff_tree(&nodes, files)) }
         }
         main.content {
+            (description_block(description))
             div.summary {
                 "Showing " strong { (files.len()) " changed files" }
                 " with " span.add { (additions) " additions" }
@@ -397,7 +460,7 @@ diff --git a/src/x.zzz b/src/x.zzz
 
     #[test]
     fn renders_both_layouts_with_escaped_code() {
-        let html = diff_content(&diff::parse(INPUT)).into_string();
+        let html = diff_content(&diff::parse(INPUT), &Description::default()).into_string();
         assert!(html.contains("table class=\"diff unified\""));
         assert!(html.contains("table class=\"diff split\""));
         assert!(html.contains("&lt;b&gt;"));
@@ -407,20 +470,20 @@ diff --git a/src/x.zzz b/src/x.zzz
     #[test]
     fn offers_viewed_checkbox_with_content_hash() {
         let files = diff::parse(INPUT);
-        let html = diff_content(&files).into_string();
+        let html = diff_content(&files, &Description::default()).into_string();
         assert_eq!(html.matches("class=\"viewed-toggle\"").count(), 2);
         assert!(html.contains(&format!("data-hash=\"{}\"", files[0].fingerprint())));
     }
 
     #[test]
     fn offers_preview_only_for_markdown_files() {
-        let html = diff_content(&diff::parse(INPUT)).into_string();
+        let html = diff_content(&diff::parse(INPUT), &Description::default()).into_string();
         assert_eq!(html.matches("data-display=\"preview\"").count(), 1);
     }
 
     #[test]
     fn orders_file_blocks_like_the_tree() {
-        let html = diff_content(&diff::parse(INPUT)).into_string();
+        let html = diff_content(&diff::parse(INPUT), &Description::default()).into_string();
         let src = html.find("data-path=\"src/x.zzz\"").unwrap();
         let readme = html.find("data-path=\"README.md\"").unwrap();
         assert!(src < readme);
@@ -438,18 +501,30 @@ diff --git a/src/x.zzz b/src/x.zzz
 
     #[test]
     fn defers_large_diffs_behind_load_button() {
-        let html = diff_content(&diff::parse(&added_file("big.txt", 401))).into_string();
+        let html = diff_content(
+            &diff::parse(&added_file("big.txt", 401)),
+            &Description::default(),
+        )
+        .into_string();
         assert!(html.contains("class=\"load-diff\""));
         assert!(!html.contains("<table"));
 
-        let html = diff_content(&diff::parse(&added_file("small.txt", 400))).into_string();
+        let html = diff_content(
+            &diff::parse(&added_file("small.txt", 400)),
+            &Description::default(),
+        )
+        .into_string();
         assert!(!html.contains("class=\"load-diff\""));
         assert!(html.contains("<table"));
     }
 
     #[test]
     fn defers_generated_files_regardless_of_size() {
-        let html = diff_content(&diff::parse(&added_file("app/Cargo.lock", 1))).into_string();
+        let html = diff_content(
+            &diff::parse(&added_file("app/Cargo.lock", 1)),
+            &Description::default(),
+        )
+        .into_string();
         assert!(html.contains("class=\"load-diff\""));
         assert!(!html.contains("<table"));
     }
@@ -473,6 +548,47 @@ diff --git a/src/x.zzz b/src/x.zzz
         let files = diff::parse(&added_file("big.txt", 401));
         let html = file_tables(&files[0]).into_string();
         assert!(html.contains("table class=\"diff unified\""));
+    }
+
+    fn commit(subject: &str, body: &str) -> Commit {
+        Commit {
+            hash: "a".repeat(40),
+            short_hash: "aaaaaaa".into(),
+            author: "t".into(),
+            date: "1 hour ago".into(),
+            subject: subject.into(),
+            body: body.into(),
+        }
+    }
+
+    #[test]
+    fn shows_note_and_commit_list_above_the_diff() {
+        let description = Description {
+            note_html: Some("<p>Why this change</p>".into()),
+            history: History::Commits(vec![commit("<fix> parser", "")]),
+        };
+        let html = diff_content(&diff::parse(INPUT), &description).into_string();
+        let note = html.find("Why this change").unwrap();
+        let commits = html.find("&lt;fix&gt; parser").unwrap();
+        let first_file = html.find("section class=\"file\"").unwrap();
+        assert!(note < commits && commits < first_file);
+    }
+
+    #[test]
+    fn shows_full_message_for_a_single_commit() {
+        let description = Description {
+            note_html: None,
+            history: History::Message(commit("subject", "body line")),
+        };
+        let html = diff_content(&diff::parse(INPUT), &description).into_string();
+        assert!(html.contains("body line"));
+        assert!(!html.contains("class=\"note-body"));
+    }
+
+    #[test]
+    fn omits_description_when_there_is_nothing_to_say() {
+        let html = diff_content(&diff::parse(INPUT), &Description::default()).into_string();
+        assert!(!html.contains("class=\"description\""));
     }
 
     #[test]
