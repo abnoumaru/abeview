@@ -56,7 +56,7 @@
   }
 
   document.addEventListener("click", (e) => {
-    const layout = e.target.closest("[data-layout]");
+    const layout = e.target.closest("button[data-layout]");
     if (layout) return setLayout(layout.dataset.layout);
 
     const section = e.target.closest("section.file");
@@ -67,7 +67,7 @@
       now ? collapsed.add(path) : collapsed.delete(path);
       return;
     }
-    const display = e.target.closest("[data-display]");
+    const display = e.target.closest("button[data-display]");
     if (display) {
       setDisplayButtons(section, display.dataset.display);
       if (display.dataset.display === "preview") {
