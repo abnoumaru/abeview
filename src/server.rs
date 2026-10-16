@@ -350,9 +350,14 @@ async fn events(
     let guard = ClientGuard::new(state.clone());
     let stream = BroadcastStream::new(view.events.subscribe()).map(move |_| {
         let _keep_alive_while_streaming = &guard;
-        Ok(Event::default().event("reload").data(""))
+        Ok(reload_event())
     });
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+/// Browsers drop SSE events without data, so the payload must not be empty.
+fn reload_event() -> Event {
+    Event::default().event("reload").data("reload")
 }
 
 async fn raw(
@@ -557,6 +562,49 @@ mod tests {
         assert!(safe_join(dir.path(), "/etc/hosts").is_none());
         assert!(safe_join(dir.path(), "sub/../sub/a.png").is_none());
         assert!(safe_join(dir.path(), "link.png").is_none());
+    }
+
+    #[tokio::test]
+    async fn reload_events_carry_data_so_browsers_dispatch_them() {
+        let (events, _) = broadcast::channel(4);
+        let view = View {
+            id: "v".into(),
+            target: Target::MarkdownDir { path: "/".into() },
+            title: String::new(),
+            events: events.clone(),
+            _watcher: None,
+        };
+        let state = Arc::new(AppState {
+            token: String::new(),
+            port: 0,
+            views: Mutex::new(HashMap::from([("v".to_string(), Arc::new(view))])),
+            clients: AtomicUsize::new(0),
+            last_activity: Mutex::new(Instant::now()),
+        });
+        let res = events_handler_response(state, &events).await;
+        assert!(res.contains("event: reload\n"), "{res:?}");
+        assert!(res.contains("\ndata:"), "{res:?}");
+    }
+
+    async fn events_handler_response(state: Arc<AppState>, tx: &broadcast::Sender<()>) -> String {
+        use tokio_stream::StreamExt as _;
+        let res = events(State(state), UrlPath("v".into()))
+            .await
+            .ok()
+            .unwrap()
+            .into_response();
+        let mut body = res.into_body().into_data_stream();
+        tx.send(()).unwrap();
+        let mut out = String::new();
+        while !out.contains("event: reload") {
+            let chunk = body.next().await.unwrap().unwrap();
+            out.push_str(&String::from_utf8_lossy(&chunk));
+        }
+        while !out.ends_with("\n\n") {
+            let chunk = body.next().await.unwrap().unwrap();
+            out.push_str(&String::from_utf8_lossy(&chunk));
+        }
+        out
     }
 
     #[test]
